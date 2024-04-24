@@ -1,5 +1,6 @@
 package com.mongodb.tasktracker
 
+import android.content.Intent
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -27,11 +28,15 @@ class GearFragment : Fragment() {
         val mainActivity = activity as? HomeActivity
         mainActivity?.app?.currentUser()?.logOutAsync { result ->
             if (result.isSuccess) {
-                activity?.finish()  // Đóng Activity sau khi đăng xuất thành công
+                // Intent to restart LoginActivity
+                val intent = Intent(activity, LoginActivity::class.java)
+                intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK  // Clear the activity stack
+                startActivity(intent)
             } else {
                 result.error.printStackTrace()  // In lỗi nếu đăng xuất không thành công
             }
         }
     }
+
 }
 
