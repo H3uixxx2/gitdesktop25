@@ -59,15 +59,15 @@ class HomeActivity : AppCompatActivity() {
 
         viewModel = ViewModelProvider(this).get(SharedViewModel::class.java)
 
-        // Khởi tạo Realm
+        // Started Realm
         Realm.init(this)
         val appConfiguration = AppConfiguration.Builder("finalproject-rujev").build()
-        app = App(appConfiguration)  // Khởi tạo app
+        app = App(appConfiguration)  // Started app
 
         binding = ActivityHomeBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        // Nhận email từ Intent và thực hiện truy vấn dữ liệu
+        // Receive email from Intent and get data queries
         intent.getStringExtra("USER_EMAIL")?.let {
             fetchStudentData(it)
         }
@@ -99,45 +99,35 @@ class HomeActivity : AppCompatActivity() {
         Log.d("fetchStudentData", "Attempting to fetch student data for email: $userEmail")
 
         database?.getCollection("Students")?.findOne(Document("email", userEmail))?.getAsync { task ->
-
             if (task.isSuccess) {
                 val studentDocument = task.get()
                 Log.d("fetchStudentData", "Successfully fetched student data: ${studentDocument?.toJson()}")
 
-                // Cập nhật thông tin sinh viên
                 studentName = studentDocument?.getString("name")
                 this.studentEmail = studentDocument?.getString("email")
-                val departmentId = studentDocument?.getObjectId("departmentId")
                 this.studentId = studentDocument?.getObjectId("_id")
 
-                // Gọi phương thức fetchBlockchainData ở đây nếu studentId khác null
                 this.studentId?.let {
                     fetchBlockchainData(it)
                 }
 
+                val departmentId = studentDocument?.getObjectId("departmentId")
+
                 if (departmentId != null) {
                     Log.d("fetchStudentData", "Fetching department data for ID: $departmentId")
                     fetchDepartmentData(departmentId)
-                    // Sau khi lấy được departmentId, cần lấy termId tương ứng với department này
-                    fetchCurrentTerm(departmentId) { termInfo ->
-                        if (termInfo != null) {
-                            // Lấy danh sách khóa học mà sinh viên đã đăng ký
-                            val enrolledCourses = studentDocument.getList("enrolledCourses", ObjectId::class.java)
-                            if (!enrolledCourses.isNullOrEmpty()) {
-                                Log.d("fetchStudentData", "Fetching courses data for enrolled courses: $enrolledCourses")
-                                fetchCoursesData(enrolledCourses) {
-                                    // Bây giờ ta sẽ lấy thông tin về các slot và term dựa trên danh sách khóa học và termId đã lấy được
-                                    fetchCoursesAndSlots(enrolledCourses, termInfo.termId)
-                                }
-                            } else {
-                                Log.e("fetchStudentData", "No enrolled courses found for user: $userEmail")
-                            }
-                        } else {
-                            Log.e("fetchStudentData", "Unable to find current term for departmentId: $departmentId")
-                        }
+                }
+
+                // Lấy danh sách khóa học mà sinh viên đã đăng ký
+                val enrolledCourses = studentDocument?.getList("enrolledCourses", ObjectId::class.java)
+                if (!enrolledCourses.isNullOrEmpty()) {
+                    Log.d("fetchStudentData", "Fetching courses data for enrolled courses: $enrolledCourses")
+                    fetchCoursesData(enrolledCourses) {
+                        // Dựa vào danh sách khóa học để lấy thông tin về term và slots
+                        fetchCurrentTermAndSlots(enrolledCourses)
                     }
                 } else {
-                    Log.e("fetchStudentData", "Department ID not found for user: $userEmail")
+                    Log.e("fetchStudentData", "No enrolled courses found for user: $userEmail")
                 }
             } else {
                 Log.e("fetchStudentData", "Error fetching student data: ${task.error}")
@@ -152,16 +142,19 @@ class HomeActivity : AppCompatActivity() {
         val departmentsCollection = database.getCollection("Departments")
 
         val query = Document("_id", departmentId)
+        Log.d("fetchDepartmentData", "Querying for department with ID: $departmentId")
+
         departmentsCollection.findOne(query).getAsync { task ->
             if (task.isSuccess) {
                 val departmentDocument = task.get()
                 if (departmentDocument != null) {
                     departmentName = departmentDocument.getString("name")
+                    Log.d("fetchDepartmentData", "Successfully fetched department: ${departmentDocument.toJson()}")
                 } else {
-                    Log.e("fetchDepartmentData", "Không tìm thấy phòng ban với ID: $departmentId")
+                    Log.e("fetchDepartmentData", "Cannot find department with ID: $departmentId")
                 }
             } else {
-                Log.e("fetchDepartmentData", "Lỗi khi truy vấn phòng ban: ${task.error}")
+                Log.e("fetchDepartmentData", "Error to query: ${task.error}")
             }
         }
     }
@@ -174,7 +167,7 @@ class HomeActivity : AppCompatActivity() {
         val departmentsCollection = database?.getCollection("Departments")
 
         val coursesInfoTemp = mutableListOf<CourseInfo>()
-        var completedCount = 0  // Biến đếm để theo dõi số lượng khóa học đã xử lý
+        var completedCount = 0  // Count variable to track the number of courses processed
 
         courseIds.forEach { courseId ->
             coursesCollection?.findOne(Document("_id", courseId))?.getAsync { task ->
@@ -198,19 +191,19 @@ class HomeActivity : AppCompatActivity() {
                                 Log.e("fetchCoursesData", "Error fetching department data: ${deptTask.error}")
                             }
 
-                            // Kiểm tra xem đã hoàn thành tất cả các tasks hay chưa
+                            // Check all tasks have been completed or not
                             if (++completedCount == courseIds.size) {
                                 coursesInfo = coursesInfoTemp
-                                onComplete()  // Gọi callback khi tất cả các khóa học đã được xử lý
+                                onComplete()  // call callback when all courses have been processed
                             }
                         }
                     } else {
                         Log.e("fetchCoursesData", "Department ID not found for course: $title")
 
-                        // Tiếp tục kiểm tra nếu không có departmentId
+                        // Continue checking if there is no departmentId
                         if (++completedCount == courseIds.size) {
                             coursesInfo = coursesInfoTemp
-                            onComplete()  // Gọi callback khi tất cả các khóa học đã được xử lý
+                            onComplete()  // call callback when all courses have been processed
                         }
                     }
                 } else {
@@ -220,7 +213,7 @@ class HomeActivity : AppCompatActivity() {
         }
     }
 
-    //truy vấn tới Collection BlockChains để get pp & ldts
+    //Query Collection BlockChains to get pp & ldts
     private fun fetchBlockchainData(studentId: ObjectId) {
         Log.d("fetchBlockchainData", "Fetching blockchain data for studentId: $studentId")
 
@@ -254,7 +247,7 @@ class HomeActivity : AppCompatActivity() {
                 blockchainLDTs = lDTs
                 Log.d("fetchBlockchainData", "PP: $pp, LDTs: $lDTs")
 
-                // Cập nhật UI
+                // Update UI
                 runOnUiThread {
                     updateBlockchainUI(pp, lDTs)
                     sendBlockchainDataToInterfaceFragment()
@@ -294,10 +287,10 @@ class HomeActivity : AppCompatActivity() {
 
     private fun passCoursesToFragment(coursesInfo: List<CourseInfo>) {
         this.coursesInfo = coursesInfo
-        // Cập nhật InforFragment với dữ liệu mới
+        // Update InforFragment with new data
         val inforFragment = supportFragmentManager.findFragmentByTag("InforFragment") as? InforFragment
         inforFragment?.let { fragment ->
-            // Đảm bảo rằng các thông tin khác cũng được cập nhật
+
             val bundle = Bundle().apply {
                 putString("name", studentName ?: "N/A")
                 putString("email", studentEmail ?: "N/A")
@@ -312,38 +305,31 @@ class HomeActivity : AppCompatActivity() {
         }
     }
 
-    private fun fetchCurrentTerm(departmentId: ObjectId, completion: (TermInfo?) -> Unit) {
-        Log.d("fetchCurrentTerm", "Starting to fetch current term with departmentId: $departmentId")
+    private fun fetchCurrentTermAndSlots(courseIds: List<ObjectId>) {
         val mongoClient = app.currentUser()?.getMongoClient("mongodb-atlas")
         val database = mongoClient?.getDatabase("finalProject")
         val termsCollection = database?.getCollection("Terms")
 
         val currentDate = Date()
+        // Lấy term hiện tại dựa trên ngày hiện tại mà không phụ thuộc vào departmentId
         val query = Document("\$and", listOf(
             Document("startDate", Document("\$lte", currentDate)),
-            Document("endDate", Document("\$gte", currentDate)),
-            Document("departments", departmentId)
+            Document("endDate", Document("\$gte", currentDate))
         ))
-
-        Log.d("fetchCurrentTerm", "Query for current term: $query")
 
         termsCollection?.findOne(query)?.getAsync { task ->
             if (task.isSuccess) {
                 val termDocument = task.get()
                 Log.d("fetchCurrentTerm", "Current term found: ${termDocument?.toJson()}")
-                val termInfo = termDocument?.let { doc ->
-                    TermInfo(
-                        termId = doc.getObjectId("_id"),
-                        name = doc.getString("name"),
-                        startDate = doc.getDate("startDate").time,
-                        endDate = doc.getDate("endDate").time,
-                        departments = doc.getList("departments", ObjectId::class.java)
-                    )
+
+                val termId = termDocument?.getObjectId("_id")
+                if (termId != null) {
+                    fetchCoursesAndSlots(courseIds, termId)
+                } else {
+                    Log.e("fetchCurrentTerm", "Term ID is null after querying current term.")
                 }
-                completion(termInfo)
             } else {
                 Log.e("fetchCurrentTerm", "Error fetching current term: ${task.error}")
-                completion(null)
             }
         }
     }
@@ -357,7 +343,7 @@ class HomeActivity : AppCompatActivity() {
 
         Log.d("fetchCoursesAndSlots", "Fetching slots for termId: $termId and courseIds: $courseIds")
 
-        // Truy vấn Slots dựa vào courseId và termId
+        //Query Slots based on courseId and termId
         val query = Document("\$and", listOf(
             Document("courseId", Document("\$in", courseIds)),
             Document("termId", termId)
@@ -365,23 +351,21 @@ class HomeActivity : AppCompatActivity() {
 
         slotsCollection?.find(query)?.iterator()?.getAsync { task ->
             if (task.isSuccess) {
-                val documents = task.get() // Lấy kết quả truy vấn
-                val slots = mutableListOf<SlotInfo>() // Khởi tạo danh sách slots
+                val documents = task.get() // Get query results
+                val slots = mutableListOf<SlotInfo>() // Initialize slots list
 
                 documents.forEach { document ->
-                    // Xử lý từng document ở đây
+                    //Process each document here
                     val slotId = document.getObjectId("_id").toString()
                     val courseId = document.getObjectId("courseId").toString()
 
                     Log.d("SlotDetail", "Processing slot $slotId for courseId $courseId")
-                    // Kiểm tra xem courseId có tồn tại trong courseTitlesMap không
+                    //Check if courseId exists in courseTitlesMap
                     if (courseTitlesMap.containsKey(courseId)) {
 
                         val courseTitle = courseTitlesMap[courseId]
-                        // Log title tìm được từ map
                         Log.d("SlotDetail", "Found title for courseId $courseId: $courseTitle")
                     } else {
-                        // Log trường hợp không tìm thấy title cho courseId trong map
                         Log.d("SlotDetail", "No title found for courseId $courseId in courseTitlesMap")
                     }
 
@@ -391,21 +375,21 @@ class HomeActivity : AppCompatActivity() {
                         endTime = document.getString("endTime"),
                         day = document.getString("day"),
                         courseId = courseId,
-                        courseTitle = courseTitlesMap[courseId] ?: "Title not found", // Cập nhật courseTitle từ map
-                        building = "Pending" // Sẽ cập nhật sau khi lấy thông tin tòa nhà
+                        courseTitle = courseTitlesMap[courseId] ?: "Title not found", // update courseTitle from map
+                        building = "Pending" // Will update after getting building information
                     )
-                    slots.add(slotInfo) // Thêm slotInfo vào danh sách
+                    slots.add(slotInfo) // Add slotInfo to the list
                 }
 
                 Log.d("fetchCoursesAndSlots", "Fetched slots: ${slots.size}")
 
-                // Tiếp tục với việc lấy thông tin tòa nhà
+                // Continue with getting building information
                 fetchAttendanceRecordsForSlots(slots, termId) { slotsWithAttendance ->
-                    // Bước 3: Thêm thông tin tòa nhà cho từng slot đã có thông tin điểm danh
+                    // Add building information for each slot that has attendance information
                     fetchBuildingForSlots(slotsWithAttendance, termId) { fullyUpdatedSlots ->
                         slotsData = fullyUpdatedSlots
                         runOnUiThread {
-                            // Gửi dữ liệu đã cập nhật đến UI
+                            // Send updated data to UI
                             sendSlotsDataToInterfaceFragment(fullyUpdatedSlots)
                         }
                     }
@@ -425,7 +409,7 @@ class HomeActivity : AppCompatActivity() {
         var callbackCount = 0
 
         slots.forEach { slot ->
-            // Bây giờ truy vấn sẽ bao gồm cả slotId và termId
+            // The query will include both slotId and termId
             val query = Document("\$and", listOf(
                 Document("availability", Document("\$elemMatch", Document("slotId", Document("\$oid", slot.slotId)).append("termId", termId)))
             ))
@@ -453,12 +437,12 @@ class HomeActivity : AppCompatActivity() {
         val studentId = this.studentId
         if (studentId == null) {
             Log.e("AttendanceError", "Student ID is null")
-            return // Dừng xử lý nếu studentId là null
+            return
         }
 
         val attendanceCollection = app.currentUser()?.getMongoClient("mongodb-atlas")?.getDatabase("finalProject")?.getCollection("Attendance")
         val slotsWithAttendance = mutableListOf<SlotInfo>()
-        val specifiedDate = Date() // Sử dụng ngày hiện tại
+        val specifiedDate = Date() // Use current date
 
         slots.forEach { slot ->
             val query = Document("\$and", listOf(
@@ -502,19 +486,19 @@ class HomeActivity : AppCompatActivity() {
     }
 
     fun canAttend(startTime: String): Boolean {
-        // Định dạng và múi giờ
+        // Format and time zone
         val currentZone = TimeZone.getTimeZone("GMT+7")
         val format = SimpleDateFormat("HH:mm", Locale.getDefault()).apply {
             timeZone = currentZone
         }
 
-        // Lấy ngày hiện tại
+        // get current day
         val specifiedDate = Date()
         val now = Calendar.getInstance(currentZone).apply {
             time = specifiedDate
         }
 
-        // Phân tích giờ bắt đầu từ chuỗi startTime
+        // Parse the starting hour from the startTime string
         val startTimeParsed = format.parse(startTime) ?: return false
         val calendarStartTime = Calendar.getInstance(currentZone).apply {
             time = startTimeParsed
@@ -530,14 +514,12 @@ class HomeActivity : AppCompatActivity() {
         val calendarEnd = calendarStartTime.clone() as Calendar
         calendarEnd.add(Calendar.MINUTE, 30) // close after 30 minute
 
-        // Kiểm tra xem thời gian hiện tại có nằm trong khoảng thời gian cho phép không
+        // Check if the current time is within the allowed time range
         val canAttend = now.after(calendarStart) && now.before(calendarEnd)
         Log.d("canAttend", "Current time is within the attendance window: $canAttend (Start: ${format.format(calendarStart.time)}, End: ${format.format(calendarEnd.time)})")
 
         return canAttend
     }
-
-
 
     fun attendSlot(slotInfo: SlotInfo) {
         if (ContextCompat.checkSelfPermission(this, ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
@@ -556,30 +538,30 @@ class HomeActivity : AppCompatActivity() {
 
     private fun confirmAttendance(slotInfo: SlotInfo, location: Location) {
         val distanceInMeters = FloatArray(2)
-        val schoolLatitude = 10.844808
-        val schoolLongitude = 106.837153
+        val schoolLatitude = 10.801074
+        val schoolLongitude = 106.660633
 
         Location.distanceBetween(location.latitude, location.longitude, schoolLatitude, schoolLongitude, distanceInMeters)
 
         if (distanceInMeters[0] <= ALLOWED_DISTANCE_METERS) {
             // Hiển thị AlertDialog để xác nhận
             val builder = AlertDialog.Builder(this)
-            builder.setTitle("Xác nhận điểm danh")
-            builder.setMessage("Bạn có chắc chắn là đang ở khu vực điểm danh?")
+            builder.setTitle("Confirm attendance")
+            builder.setMessage("Are you sure you are in the attendance area?")
             builder.setPositiveButton("Attend") { dialog, which ->
                 updateAttendanceRecord(slotInfo, "present")
-                showResultDialog("Đã điểm danh thành công, vui lòng chạy lại ứng dụng")
+                showResultDialog("Attendance has been successfully registered!")
             }
             builder.setNegativeButton("Cancel", { dialog, which -> dialog.dismiss() })
             builder.show()
         } else {
-            showResultDialog("Bạn không ở trong khu vực cho phép.")
+            showResultDialog("You are not in the allowed area.")
         }
     }
 
     private fun showResultDialog(message: String) {
         AlertDialog.Builder(this).apply {
-            setTitle("Kết quả điểm danh")
+            setTitle("Attendance results")
             setMessage(message)
             setPositiveButton("Ok") { dialog, which -> dialog.dismiss() }
             show()
@@ -590,18 +572,18 @@ class HomeActivity : AppCompatActivity() {
         val attendanceCollection = app.currentUser()?.getMongoClient("mongodb-atlas")?.getDatabase("finalProject")?.getCollection("Attendance")
         val blockChainsCollection = app.currentUser()?.getMongoClient("mongodb-atlas")?.getDatabase("finalProject")?.getCollection("BlockChains")
 
-        // Cập nhật trạng thái điểm danh trong collection `Attendance`
+        // Update the attendance status in the `Attendance` collection
         val query = Document("slotId", ObjectId(slotInfo.slotId)).append("studentId", ObjectId(studentId.toString()))
         val update = Document("\$set", Document("status", status))
 
         attendanceCollection?.updateOne(query, update)?.getAsync { result ->
             if (result.isSuccess) {
                 Log.d("updateAttendance", "Attendance status updated successfully.")
-                Toast.makeText(this, "Attendance marked as $status.", Toast.LENGTH_SHORT).show()
+                /*Toast.makeText(this, "Attendance marked as $status.", Toast.LENGTH_SHORT).show()*/
 
-                if (status == "present") {
-                    // Only increment points if the status is "present"
-                    val pointAdjustment = Document("\$inc", Document("PP", 0.05).append("LDTs", 0.1))
+                /*if (status == "present") {
+                    // Only increment LDTs if the status is "present"
+                    val pointAdjustment = Document("\$inc", Document("LDTs", 0.1))
                     blockChainsCollection?.updateOne(Document("studentId", ObjectId(studentId.toString())), pointAdjustment)?.getAsync { task ->
                         if (task.isSuccess) {
                             Log.d("updateBlockchainPoints", "Blockchain points updated successfully for attending.")
@@ -609,12 +591,12 @@ class HomeActivity : AppCompatActivity() {
                             Log.e("updateBlockchainPoints", "Failed to update points: ${task.error}")
                         }
                     }
-                }
+                }*/
 
                 // Fetch new blockchain data to ensure UI is updated
                 fetchBlockchainData(studentId!!)
 
-                // Cập nhật trạng thái điểm danh trong slotsData và UI
+                // Update attendance status in slotsData and UI
                 updateLocalSlotData(slotInfo.slotId, status)
                 sendSlotsDataToInterfaceFragment(slotsData)
             } else {
@@ -636,7 +618,7 @@ class HomeActivity : AppCompatActivity() {
     private fun sendSlotsDataToInterfaceFragment(slots: List<SlotInfo>? = null) {
         val dataToPass = slots ?: slotsData
         if (dataToPass != null) {
-            Log.d("sendSlotsDataToInterfaceFragment", "Cập nhật dữ liệu Slots trong InterfaceFragment, số lượng: ${dataToPass.size}")
+            Log.d("sendSlotsDataToInterfaceFragment", "Update Slots data in InterfaceFragment, quantity: ${dataToPass.size}")
             val interfaceFragment = supportFragmentManager.findFragmentById(R.id.frame_layout) as? InterfaceFragment
             if (interfaceFragment != null) {
                 interfaceFragment.refreshSlotsData(dataToPass)
@@ -649,7 +631,7 @@ class HomeActivity : AppCompatActivity() {
                 replaceFragment(newFragment)
             }
         } else {
-            Log.e("sendSlotsDataToInterfaceFragment", "Không có dữ liệu Slots để cập nhật InterfaceFragment.")
+            Log.e("sendSlotsDataToInterfaceFragment", "There is no Slots data to update InterfaceFragment.")
         }
     }
 
@@ -660,7 +642,7 @@ class HomeActivity : AppCompatActivity() {
                     if (slotsData != null) {
                         putSerializable("slotsData", ArrayList(slotsData))
                     }
-                    putString("addressWallet", addressWallet ?: "No address")  // Truyền addressWallet cho InterfaceFragment
+                    putString("addressWallet", addressWallet ?: "No address")  // Pass addressWallet to InterfaceFragment
                 }
                 is InforFragment -> {
                     if (coursesInfo != null) {
@@ -668,15 +650,15 @@ class HomeActivity : AppCompatActivity() {
                         putString("email", studentEmail ?: "N/A")
                         putString("department", departmentName ?: "N/A")
                         putSerializable("courses", ArrayList(coursesInfo))
-                        putDouble("PP", blockchainPP ?: 0.0)  // Thêm thông tin blockchain PP
-                        putDouble("LDTs", blockchainLDTs ?: 0.0)  // Thêm thông tin blockchain LDTs
+                        putDouble("PP", blockchainPP ?: 0.0)  // Add PP blockchain information
+                        putDouble("LDTs", blockchainLDTs ?: 0.0)  // Add LDTs blockchain information
                     }
                 }
             }
         }
         fragment.arguments = args
 
-        // Thực hiện thay thế Fragment trên UI
+        // Perform Fragment replacement on UI
         supportFragmentManager.beginTransaction().apply {
             replace(R.id.frame_layout, fragment, fragment.javaClass.simpleName)
             commit()
